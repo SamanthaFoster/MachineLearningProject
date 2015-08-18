@@ -1,0 +1,113 @@
+---
+title: "Weight Lifting Technique Prediction"
+author: "Samantha Foster"
+date: "Saturday, Aug 17, 2015"
+output: html_document
+---
+
+##Summary
+The purpose of this project is to predict if a subject is performing a weight lifting exercise correctly, given data from accelerometers placed on various parts of their body.  The data provided has a "class" variable, which will be used as the output.  A boosted random forest algorithm was used to predict the class of exercise, given a number of input variables.  This report outlines the preprocessing of the data, model training, and finally predicting outcomes. 
+
+####1. Preprocess the data
+
+The first step in this analysis is to get the data ready for training a model.  The following steps were taken to get rid of irrelevant data, and reduce the number of variables used in the model:
+
+1. Remove X, user name, the timestamp variables, and the new window.  The num_window was kept because it was assumed that this value indicated where in the exercise the other variables were measured.  This is important because incorrect technique is likely to happen at specific times during the exercise (for example, in the middle rather than right at the begining).
+
+2. There were many variables where most of the observations were NA.  These variables were removed as it would confuse many models, and there is no accurate way to fill in these values.
+
+3. Check to see if there are any variables that have very few unique values, or are highly skewed towards one value.  These will be removed as they can cause problems in some models.
+
+4. As there was a large number of variables measured, it could be assumed that some are closely related.  Check to see if any variables are highly correlated, and remove one of them.  
+
+The following shows the R code for performing the above steps.
+
+```{r,hide=TRUE,warning=FALSE}
+library(caret)
+
+setwd("C:/Users/Admin/Documents/Coursera/MachineLerning")
+
+## download the data files for training and testing 
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",destfile="training.csv",method="curl")
+training <- read.csv("training.csv")
+
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",destfile="testing.csv",method="curl")
+testing <- read.csv("testing.csv")
+
+##take out irrelevant columns
+trainData <- subset(training, select=c(-X, -user_name, -raw_timestamp_part_1, -raw_timestamp_part_2, -cvtd_timestamp, -new_window))
+
+
+## convert all variables to numeric type except the last one, which is the classe
+for( i in 1:(dim(trainData)[2]-1)){
+  if(class(trainData[[i]]) == "factor"){
+    trainData[[i]]<-as.numeric(trainData[[i]])
+    }
+  }
+
+
+## remove variables that are moajority NAs
+i<-1
+l<-dim(trainData)[2]
+while(i<l){
+  if(sum(is.na(trainData[[i]])) > 500){
+    trainData<-trainData[,-i]
+    i<- i-1
+    }
+  l<- dim(trainData)[2]
+  i <- i+1
+  }
+
+## use the nearZeroVar function to remove the features that have very few unique values and are highly skewed
+zvar<-nearZeroVar(trainData)
+trainData<-trainData[,-zvar]
+
+## find the variables that are very highly correlation, and remove them
+dcorr<-cor(trainData[,-54])
+highCorr<-findCorrelation(dcorr,0.9)
+trainData<-trainData[,-highCorr]
+
+```
+
+####2. Build the model
+
+For this problem, I chose to use a boosted tree model.  Cross validation with 10 k-folds was used to estimate the out of sample error.  The following R code uses the train function to build the model. 
+
+```{r,hide=TRUE,warning=FALSE,cache=TRUE}
+
+## set the control to cross validation, with 10 k folds
+control <- trainControl(method="cv", number = 10)
+
+## train a boosted tree model
+set.seed(1)
+modFit<-train(trainData$classe ~ ., data = trainData, method="gbm",trControl = control, verbose=FALSE)
+
+```
+
+The out of sample error is the value reported for the accuracy of the best model. It is an average of the 10 folds calculated using this model.  
+
+```{r}
+error <- max(modFit$results$Accuracy)
+error
+```
+The out of sample error rate is estimated to be `r error`.
+
+####3. Predict the classe of the test set
+```{r}
+
+## first, make the test data columns match those selected for training
+testData<-subset(testData, select = names(trainData[1:46]))
+
+## add the problem_id back in
+testData<-cbind(testData, problem_id=testing[,160])
+
+## change all values to numeric
+for( i in 1:(dim(trainData)[2]-1)){
+  if(class(testData[[i]]) == "factor" | class(testData[[i]]) == "logical"){
+    testData[[i]]<-as.numeric(testData[[i]])
+    }
+  }
+
+predMod <- predict(modFit,testData[,1:46])
+
+```
